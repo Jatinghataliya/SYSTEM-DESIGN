@@ -14,6 +14,9 @@ and what to use instead.
 6. [Advantages and Disadvantages](#6-advantages-and-disadvantages)
 7. [Alternatives](#7-alternatives)
 8. [Quick Decision Guide](#8-quick-decision-guide)
+9. [Java Implementation](#9-java-implementation)
+10. [Libraries You Can Use Instead](#10-libraries-you-can-use-instead)
+11. [Running the Project](#11-running-the-project)
 
 ---
 
@@ -291,3 +294,196 @@ flowchart TD
 | Main tradeoff | Stability and decentralization, in exchange for uneven load and membership coordination |
 | Main weakness | Imperfect balance, hot keys, cascading load on failure, no range queries |
 | Main alternatives | Rendezvous, jump hash, hash slots, range partitioning, directory, Maglev |
+
+---
+
+## 9. Java Implementation
+
+Project layout (Java 17, Maven):
+
+```
+Consistant-Hashing/
+|-- pom.xml
+`-- src
+    |-- main/java/com/example/consistenthashing/
+    |   |-- NodeLocator.java           # interface: addNode, removeNode, locate
+    |   |-- ConsistentHashRing.java    # hash ring with virtual nodes, weights and replicas
+    |   |-- ModuloLocator.java         # baseline: hash(key) % N
+    |   |-- RendezvousLocator.java     # highest-random-weight hashing
+    |   |-- JumpHashLocator.java       # Guava Hashing.consistentHash
+    |   |-- Hashes.java                # shared Murmur3 64-bit hash (Guava)
+    |   |-- Analysis.java              # measures key movement and load balance
+    |   `-- Main.java                  # demo, 8 sections
+    `-- test/java/com/example/consistenthashing/
+        `-- ConsistentHashingTest.java
+```
+
+All four strategies implement the same `NodeLocator` interface and use the same hash, so the
+comparisons are like for like.
+
+### The ring in code
+
+```java
+// A TreeMap is the ring: position -> physical node.
+private final TreeMap<Long, String> ring = new TreeMap<>();
+
+public void addNode(String node, int weight) {
+    for (int i = 0; i < baseVirtualNodes * weight; i++) {
+        ring.putIfAbsent(Hashes.hash(node + "#" + i), node);      // vnode positions
+    }
+}
+
+public String locate(String key) {
+    Map.Entry<Long, String> e = ring.ceilingEntry(Hashes.hash(key)); // first position >= hash
+    return (e != null ? e : ring.firstEntry()).getValue();           // wrap around the end
+}
+```
+
+- **Lookup is O(log V)** (V = total virtual nodes), because `TreeMap.ceilingEntry` is a tree search.
+- **Replicas** (`locateReplicas`) walk clockwise and collect the next **distinct physical** nodes. Without the "distinct" rule, neighbouring vnodes often belong to the same machine, and two replicas would land on one box.
+- **Weights:** a node with weight 4 gets 4 times as many ring positions, so about 4 times the keys.
+- **Thread safety:** not thread-safe. In a service, build a new ring when membership changes and swap a `volatile` reference to it, so readers never see a half-updated ring.
+
+### Results from the demo
+
+All numbers below are from a real run: 100,000 keys, Murmur3 hash.
+
+**Adding a 5th node to 4 (ideal = 20%):**
+
+```
+Strategy               Keys moved   Ideal (1/N)
+Modulo                      80.1 %        20.0 %
+Ring (1 vnode)               3.0 %        20.0 %
+Ring (150 vnodes)           18.2 %        20.0 %
+Rendezvous                  20.0 %        20.0 %
+Jump hash (Guava)           19.7 %        20.0 %
+```
+
+Modulo moves 80% of the keys, as predicted in section 3. The ring, rendezvous and jump hash all
+land near the ideal 20%. The 1-vnode ring shows 3.0%, which is **luck, not a feature**: the new
+node happened to land on a very small arc. With one point per node the result is unpredictable
+and can be far above 20% too.
+
+**Removing one of 5 nodes:**
+
+```
+Strategy               Keys moved   Moved from OTHER nodes
+Modulo                      80.1 %   60115
+Ring (150 vnodes)           21.6 %   0
+Rendezvous                  20.1 %   0
+Jump hash (Guava)      cannot remove arbitrary nodes (only the last bucket)
+```
+
+The last column is the core promise. For the ring and rendezvous, **no key moved except the keys
+owned by the removed node**. For modulo, 60,115 keys moved between nodes that did not change at
+all. The ring moved 21.6% rather than exactly 20% because node-3 happened to own slightly more
+than its fair share.
+
+**Virtual nodes and balance (10 nodes):**
+
+```
+Strategy               Ring points    Busiest/avg  Idlest/avg
+Ring (1 vnode)         10             3.28         0.10
+Ring (10 vnodes)       100            1.45         0.42
+Ring (50 vnodes)       500            1.28         0.75
+Ring (150 vnodes)      1500           1.13         0.80
+Ring (500 vnodes)      5000           1.06         0.96
+```
+
+`1.00` is perfect. With one point per node the busiest node carries 3.3 times the average and the
+idlest only 0.1 times. Balance improves steadily with more vnodes, and the ring grows in step.
+
+**Weighted nodes (weights 1, 1, 2, 4):**
+
+```
+Node       Weight   Keys       Share
+small-1    1        12452       12.5 %   (target 12.5 %)
+small-2    1        12741       12.7 %   (target 12.5 %)
+medium     2        24037       24.0 %   (target 25.0 %)
+large      4        50770       50.8 %   (target 50.0 %)
+```
+
+**Where a dead node's load goes (10 nodes, node-1 fails):**
+
+```
+Ring (1 vnode)     node-1 owned 4426 keys, spread over 1 survivors, worst survivor took 100%
+Ring (150 vnodes)  node-1 owned 10448 keys, spread over 9 survivors, worst survivor took 14%
+```
+
+This is the cascading-load disadvantage from section 6, measured. With one point per node, a
+single neighbour inherits all of the dead node's keys and may be overloaded. With 150 vnodes all 9
+survivors share it.
+
+**Lookup speed (100 nodes, 1M lookups):**
+
+```
+Strategy               ns per lookup
+Modulo                 306
+Ring (150 vnodes)      547
+Rendezvous             14165
+Jump hash (Guava)      132
+```
+
+Rendezvous is O(N) and about 25 times slower than the ring at 100 nodes, which is why it suits
+small clusters. These timings include `String` hashing and a map lookup in a simple loop, so treat
+them as rough and machine-dependent; the ordering is what matters.
+
+### What the tests check
+
+[`ConsistentHashingTest`](src/test/java/com/example/consistenthashing/ConsistentHashingTest.java)
+has 17 tests:
+
+- Same key maps to the same node, and **two rings built in different orders agree**, so independent clients stay consistent.
+- Lookup **wraps around** the end of the ring.
+- Removing a node moves **only that node's keys**. Adding a node moves keys **only to the new node**.
+- The ring moves far fewer keys than modulo when growing from 4 to 5 nodes.
+- More vnodes give better balance. Weights give proportional shares. Ownership fractions sum to 1.
+- After a failure, load spreads across **all** survivors.
+- Replicas are **distinct physical nodes** and start with the owner. Replica count is capped by node count.
+- Rendezvous moves only the removed node's keys. Jump hash grows minimally but **refuses to remove a middle bucket**.
+
+---
+
+## 10. Libraries You Can Use Instead
+
+Java's standard library has no consistent hash ring. Options:
+
+| Library | What it gives you | Notes |
+| :--- | :--- | :--- |
+| **Guava** (`com.google.guava:guava`) | `Hashing.murmur3_128()` for a good hash, and `Hashing.consistentHash(long, int)` for **jump consistent hash** | Used in this project. It is **not a ring**: buckets are numbered `0..N-1` and only the last one can be removed. It also has no vnodes or weights |
+| **spymemcached** (`net.spy:spymemcached`) | `KetamaNodeLocator`, a production **Ketama** ring for Memcached | Built into the Memcached client. It works on `MemcachedNode` objects, not plain strings, so it is awkward to use stand-alone. Compatible with other Ketama clients |
+| **Redisson** (`org.redisson:redisson`) | Redis client with cluster support | Redis Cluster uses **16,384 hash slots**, not a ring |
+| **Apache Cassandra / Riak / DynamoDB** | Consistent hashing with vnodes built into the database | You do not write it; you get it as part of the data store |
+| **Hazelcast / Infinispan / Ignite** | Partitioned in-memory data grids | Use a partition table with a hash-based layout internally |
+| **Envoy / HAProxy / NGINX** | Ring hash and Maglev load balancing | Configuration, not code. Use them for request routing |
+| **Ketama (libketama) and compatible ports** | The reference ring algorithm for caches | Useful when several languages must produce the **same** placement |
+
+### Build your own or use a library?
+
+| Situation | Choice |
+| :--- | :--- |
+| You use Memcached from Java | The client's built-in Ketama locator |
+| You use Redis | Redis Cluster hash slots; you do not need your own ring |
+| You use Cassandra, Dynamo-style or Riak storage | Already built in |
+| Numbered shards that only grow | Guava `Hashing.consistentHash` |
+| Custom sharding in your own service (cache fleet, worker affinity, sticky routing) | A small ring like `ConsistentHashRing` here. It is about 100 lines |
+| Load balancing HTTP traffic | Envoy, HAProxy or NGINX |
+| Several languages must agree on placement | Use a standard algorithm (Ketama or jump hash) and test with fixed vectors |
+
+Guidance:
+
+- **Do not use `String.hashCode()`** for the ring. It is 32-bit, spreads poorly on similar strings like `node-1#1`, `node-1#2`, and differs between languages. Use Murmur3, xxHash or similar.
+- **Pin the hash and the vnode naming.** If you change either, every key moves.
+- **Test with fixed vectors.** Write down expected owners for a set of sample keys, so an accidental change to the hash or ring layout is caught.
+
+---
+
+## 11. Running the Project
+
+Requirements: JDK 17+ and Maven. No Docker or network services needed.
+
+```bash
+mvn test                 # 17 unit tests
+mvn compile exec:java    # run the demo (Main)
+```
+

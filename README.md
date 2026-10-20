@@ -14,6 +14,8 @@ and what to use instead.
 6. [Advantages and Disadvantages](#6-advantages-and-disadvantages)
 7. [Alternatives](#7-alternatives)
 8. [Quick Decision Guide](#8-quick-decision-guide)
+9. [Java Implementation](#9-java-implementation)
+10. [Running the Project](#10-running-the-project)
 
 ---
 
@@ -298,6 +300,163 @@ flowchart TD
 | Main tradeoff | Bounded memory and no missed heavy hitters, in exchange for undercounted values and non-fixed space |
 | Main weakness | Approximate counts, false positives near the threshold, space grows with `log N`, hard to merge |
 | Main alternatives | Misra-Gries, Space-Saving, Count-Min Sketch, Sticky Sampling, exact HashMap |
+
+---
+
+## 9. Java Implementation
+
+Project layout (Java 17, Maven, no runtime dependencies):
+
+```
+Lossy-Count/
+|-- pom.xml
+`-- src
+    |-- main/java/com/example/lossycount/
+    |   |-- LossyCounter.java   # the algorithm: add, frequentItems, estimate, maxError
+    |   |-- ExactCounter.java   # baseline: HashMap with one counter per distinct item
+    |   |-- ZipfStream.java     # seeded skewed stream generator (few heavy items, long tail)
+    |   `-- Main.java           # demo, 5 sections
+    `-- test/java/com/example/lossycount/
+        `-- LossyCounterTest.java
+```
+
+### The algorithm in code
+
+```java
+public void add(T item) {
+    n++;
+    long currentBucket = currentBucket();               // ceil(n / w)
+
+    Entry<T> e = table.get(item);
+    if (e != null) {
+        e.count++;                                       // already tracked
+    } else {
+        table.put(item, new Entry<>(item, 1, currentBucket - 1)); // delta = b_current - 1
+    }
+
+    if (n % bucketWidth == 0) {                          // end of bucket
+        table.values().removeIf(x -> x.count + x.delta <= currentBucket);
+    }
+}
+
+public List<Entry<T>> frequentItems(double support) {
+    double threshold = (support - epsilon) * n;         // report f >= (s - e) * N
+    ...
+}
+```
+
+- **Update is O(1)** on average (one `HashMap` lookup). Every `w` items there is one O(table size) prune.
+- **Estimates are lower bounds.** `estimate(item)` never exceeds the true count, and is short by at most `maxError()` = `epsilon * N`.
+- **`frequentItems(s)` requires `s > epsilon`.** Otherwise the threshold `(s - epsilon) * N` is not positive and everything would be reported.
+- **Thread safety:** not thread-safe. Give each stream partition its own counter, or guard `add` with a lock.
+
+### Results from the demo
+
+All numbers below are from a real run. The stream has 1,000,000 items drawn from 100,000 possible
+ids with a Zipf distribution (exponent 1.1, seed 42), so a few items are very common and most are rare.
+
+**Trace of the worked example from section 1 (`epsilon = 0.25`, bucket width 4):**
+
+```
+N=1 bucket=1 add a  -> table [a(f=1, delta=0)]
+N=2 bucket=1 add a  -> table [a(f=2, delta=0)]
+N=3 bucket=1 add b  -> table [a(f=2, delta=0), b(f=1, delta=0)]
+N=4 bucket=1 add c  -> table [a(f=2, delta=0)]   (bucket ended, pruned)
+N=5 bucket=2 add a  -> table [a(f=3, delta=0)]
+N=6 bucket=2 add d  -> table [a(f=3, delta=0), d(f=1, delta=1)]
+N=7 bucket=2 add a  -> table [a(f=4, delta=0), d(f=1, delta=1)]
+N=8 bucket=2 add b  -> table [a(f=4, delta=0)]   (bucket ended, pruned)
+```
+
+This matches the table in section 1. `b` and `c` are dropped after bucket 1. `d` and `b` come back with
+`delta = 1` and are dropped after bucket 2. Only `a` survives, with an exact count of 4.
+
+**Accuracy and memory (`s = 1%`, `epsilon = 0.1%`, bucket width 1,000):**
+
+```
+Exact counter:  64,723 counters held (one per distinct item)
+Lossy counter:  138 counters at the end, 567 at the peak
+Memory saved:   114.1x fewer counters at the peak
+
+Truly frequent (true count >= 10,000): 10 items
+Reported by Lossy Counting:            11 items
+False negatives:                       0   (guarantee: 0)
+False positives:                       1   (within the margin)
+Estimates above the true count:        0   (guarantee: 0)
+Worst undercount:                      0   (guarantee: <= 1,000)
+```
+
+All 10 truly frequent items were found. The one extra item has a true count between
+`(s - epsilon) * N` = 9,000 and 10,000, which is exactly the margin the algorithm allows.
+
+The undercount was 0 here because the heavy items appear in the very first bucket, so they are
+inserted with `delta = 0` and are never pruned. The 1,000 limit is a worst case, not typical error.
+Items that enter the table late, or get pruned and re-enter, are the ones that can be short.
+
+**Effect of epsilon (same stream, `s = 1%`):**
+
+```
+epsilon   width    peak size   reported   false pos.   false neg.   max error
+0.50%     200      156         18         8            0            18
+0.20%     500      332         13         3            0            0
+0.10%     1000     567         11         1            0            0
+0.05%     2000     988         11         1            0            0
+0.02%     5000     2068        10         0            0            0
+```
+
+This is the tradeoff from section 5, measured. Smaller `epsilon` costs more memory and removes false
+positives. At `0.5%` the table is small (156 entries) but 8 of the 18 reported items are not really
+frequent. `false neg.` is 0 in every row: no heavy hitter is ever missed.
+
+**Table size over time (`epsilon = 0.1%`):**
+
+```
+Items seen   Exact counters   Lossy counters   Max error
+100,000      17,082           143              100
+300,000      34,653           150              300
+500,000      46,446           136              500
+700,000      54,974           151              700
+1,000,000    64,723           138              1,000
+```
+
+The exact table grows with every new distinct item. The lossy table stays around 130 to 150 entries
+for the whole run, while its error bound `epsilon * N` grows linearly, as noted in section 6.
+
+**A stream with no skew (uniform, `epsilon = 0.1%`):**
+
+```
+Exact counters: 99,994
+Lossy peak:     1,011   (bound: (1/e) * log(e * N) = 6,908)
+Reported at s=1%: 0 items (nothing is frequent)
+```
+
+Every id is rare, so each bucket is pruned almost empty and the table never holds much more than
+one bucket (1,000 items). The theoretical bound of 6,908 is a worst case that this stream does not
+come close to. Nothing is reported because nothing is frequent.
+
+### What the tests check
+
+[`LossyCounterTest`](src/test/java/com/example/lossycount/LossyCounterTest.java) has 18 tests:
+
+- Bucket width is `ceil(1/epsilon)`. Invalid `epsilon` and `support` values are rejected.
+- With no pruning, counts are exact. The **worked example from section 1** gives the same table at each step.
+- A new entry gets `delta = bucket - 1`. The bucket id advances every `w` items.
+- A frequent item **survives every prune**. In an all-distinct stream, rare items are pruned and the table stays within about one bucket.
+- Peak memory stays **below the theoretical bound** `(1/e) * log(e * N)`.
+- **Never overcounts.** Undercount is at most `epsilon * N`. `f + delta` is never below the true count.
+- **No false negatives** across 5 different random streams. No reported item has a true count below `(s - epsilon) * N`.
+- Results are sorted most frequent first. Lossy Counting uses far fewer counters than the exact baseline on skewed data. The stream generator is reproducible and skewed.
+
+---
+
+## 10. Running the Project
+
+Requirements: JDK 17+ and Maven. No Docker or network services needed.
+
+```bash
+mvn test                 # 18 unit tests
+mvn compile exec:java    # run the demo (Main)
+```
 
 ---
 

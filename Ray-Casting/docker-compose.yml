@@ -1,0 +1,11 @@
+services:
+  postgis:
+    image: postgis/postgis:16-3.4
+    container_name: raycasting-postgis
+    environment:
+      POSTGRES_DB: geofence
+      POSTGRES_USER: geo
+      POSTGRES_PASSWORD: geo
+    ports:
+      # 5433 on the host, because a local PostgreSQL commonly owns 5432
+      - "5433:5432"

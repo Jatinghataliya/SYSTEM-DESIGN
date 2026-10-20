@@ -15,6 +15,8 @@ and what to use instead.
 7. [Alternatives](#7-alternatives)
 8. [Quick Decision Guide](#8-quick-decision-guide)
 9. [Real-World Usage](#9-real-world-usage)
+10. [Java Implementation](#10-java-implementation)
+11. [Running the Project](#11-running-the-project)
 
 ---
 
@@ -400,6 +402,173 @@ flowchart TD
 
 Typical pattern: keep one small sketch per `(day, dimension)`, store them, and `merge` any selection
 of them at query time to get unique counts over arbitrary ranges.
+
+---
+
+## 10. Java Implementation
+
+Project layout (Java 17, Maven, no runtime dependencies):
+
+```
+Hyper-Log-Log/
+|-- pom.xml
+`-- src
+    |-- main/java/com/example/hyperloglog/
+    |   |-- HyperLogLog.java   # the sketch: add, estimate, merge, union, copy
+    |   |-- Hash64.java        # 64-bit hash (FNV-1a + Murmur3 finalizer) for strings and longs
+    |   `-- Main.java          # demo, 6 sections
+    `-- test/java/com/example/hyperloglog/
+        `-- HyperLogLogTest.java
+```
+
+### The algorithm in code
+
+```java
+public void addHash(long hash) {
+    int j = indexOf(hash, p);            // first p bits pick the register
+    byte rho = rho(hash, p);             // leading zeros of the rest, plus 1
+    if (rho > registers[j]) {
+        registers[j] = rho;              // keep the maximum
+    }
+}
+
+public double estimate() {
+    double sum = 0; int zeros = 0;
+    for (byte r : registers) { sum += Math.pow(2.0, -r); if (r == 0) zeros++; }
+    double raw = alpha(m) * m * (double) m / sum;          // harmonic mean
+    if (raw <= 2.5 * m && zeros > 0) {
+        return m * Math.log((double) m / zeros);           // Linear Counting for small sets
+    }
+    return raw;
+}
+
+public void merge(HyperLogLog other) {                     // same precision required
+    for (int i = 0; i < m; i++) {
+        registers[i] = (byte) Math.max(registers[i], other.registers[i]);
+    }
+}
+```
+
+- **Update is O(1).** One hash, one register compare.
+- **Estimate is O(m).** It scans all registers.
+- **Merge is O(m)** and lossless: the merged registers are identical to a sketch built from both streams.
+- **Plain HyperLogLog, not HyperLogLog++.** It uses 64-bit hashes and Linear Counting for small sets. There is no bias-correction table and no sparse mode, so mid-range estimates carry a small bias that HLL++ removes.
+- **One byte per register.** For simplicity the registers are a `byte[]`, so `p = 14` uses 16 KB here. Packing each register into 6 bits gives the 12 KB figure quoted in section 1.
+- **Hash must be shared.** Sketches can only be merged if they were built with the same hash function and the same `p`. `merge` rejects different `p`, but it cannot detect a different hash.
+- **Thread safety:** not thread-safe. Give each thread its own sketch and merge them, or guard with a lock.
+
+### Results from the demo
+
+All numbers below are from a real run of `Main`. Sets are built from sequential ids or `"user-N"` strings, and shard traffic uses a seeded `Random`.
+
+**Trace on a tiny stream (`p = 4`, so 16 registers):**
+
+```
+element  hash (hex)         register  rho   effect
+alice    0x3507d047a67c08f4 3         2     M[3]: 0 -> 2
+bob      0xf6493629e5654ae0 15        2     M[15]: 0 -> 2
+carol    0x2b10fd687aea520e 2         1     M[2]: 0 -> 1
+alice    0x3507d047a67c08f4 3         2     no change (duplicate or equal rho)
+dave     0xabbc8a044db68a46 10        1     M[10]: 0 -> 1
+bob      0xf6493629e5654ae0 15        2     no change (duplicate or equal rho)
+erin     0xa0dc28019d403156 10        5     M[10]: 1 -> 5
+
+True distinct: 5. Estimate: 4.60
+```
+
+The first `p = 4` bits of the hash pick the register (`0x3` is register 3). `rho` counts the leading zeros of the remaining bits, plus one. A repeated element hits the same register with the same `rho`, so nothing changes. `erin` lands in register 10 with a larger `rho`, so the maximum moves from 1 to 5.
+
+**Accuracy across cardinalities (`p = 14`, standard error 0.81%):**
+
+```
+true distinct  estimate       error
+100            100            +0.00%
+1,000          1,007          +0.70%
+10,000         9,952          -0.48%
+100,000        99,333         -0.67%
+1,000,000      1,001,252      +0.13%
+10,000,000     9,999,753      -0.00%
+```
+
+One sketch of fixed size covers 100 to 10 million distinct elements, with every error under 1%.
+
+**Effect of precision (1,000,000 distinct, 20 runs per row):**
+
+```
+p    m         memory       theory error   measured RMS   worst run
+8    256       256 B        6.50%          6.92%          14.77%
+10   1,024     1 KB         3.25%          3.02%          7.28%
+12   4,096     4 KB         1.63%          1.43%          3.92%
+14   16,384    16 KB        0.81%          0.52%          1.24%
+16   65,536    64 KB        0.41%          0.32%          0.66%
+```
+
+This is the tradeoff from section 5, measured. Memory is a `byte[]`, one byte per register. Going from `p = 8` to `p = 12` is 16x the memory for about 4x lower error. The measured RMS tracks the theoretical `1.04 / sqrt(m)` but is only an average over 20 runs, so single rows such as `p = 14` can land below it. The worst single run at `p = 8` is 14.77%, more than twice the standard error, which is why a low precision should only be used when roughly 5% error is acceptable.
+
+**Duplicates are free (`p = 14`):**
+
+```
+50,000 distinct users added once:              estimate 50,647
+Same users added 20 more times (1.05M events): estimate 50,647
+```
+
+The estimate is identical because re-adding an element never changes a register. Note the estimate is 1.3% above the true 50,000: this is the sketch's error, and it stays the same no matter how many duplicates arrive.
+
+**Merge across 8 servers with overlapping users (`p = 14`):**
+
+```
+server 0 sees about 155,152 distinct users
+... (7 more servers, each about 155,000 to 159,000)
+
+True distinct users overall:         392,661
+Sum of per-server counts (WRONG):    1,252,817  (+219.1%)
+Merged sketch (max of registers):    391,870  (-0.20%)
+```
+
+Adding up per-server unique counts counts the same user once per server, so it is 3.2 times too high. Merging the sketches counts each user once, within 0.2%, and each server only has to ship its sketch, not its user list.
+
+**Daily sketches combined into a weekly count (`p = 14`):**
+
+```
+day    true unique    estimate
+1      84,919         83,712
+2      85,036         84,219
+3      85,002         84,974
+4      85,033         84,345
+5      85,006         84,565
+6      85,112         85,143
+7      85,092         85,391
+
+Unique users in the week, true:       270,991
+Union of the 7 daily sketches:        268,978  (-0.74%)
+Memory kept: 7 sketches x 16 KB = 112 KB, instead of 270,991 user ids.
+```
+
+Keep one sketch per day. The unique users for any date range come from merging the matching daily sketches, with no need to touch the raw events.
+
+### What the tests check
+
+[`HyperLogLogTest`](src/test/java/com/example/hyperloglog/HyperLogLogTest.java) has 24 tests:
+
+- **Construction:** invalid precision is rejected, `m = 2^p`, and the standard error matches `1.04 / sqrt(m)`.
+- **Hash helpers:** the register index is the first `p` bits, `rho` is leading zeros plus one, `rho` is capped when the remaining bits are all zero, and the hash sets each of the 64 bits about half the time even for sequential input.
+- **Basic behaviour:** an empty sketch estimates 0, registers only ever grow, duplicates do not change any register, and insertion order does not matter.
+- **Accuracy:** small counts are nearly exact, error stays within 3 standard errors from 1,000 up to 5 million elements, and measured RMS error over 40 runs is within 0.5x to 1.5x of theory.
+- **Precision:** higher `p` gives lower error, and memory does not grow with cardinality.
+- **Merge:** the merge of two sketches equals the sketch of the union, merge is commutative, associative and idempotent, `union` leaves its inputs untouched, merging with an empty sketch changes nothing, and different precisions are rejected.
+- **Overlapping shards:** merging counts each element once within 3 standard errors, while summing the shard counts badly overcounts.
+
+---
+
+## 11. Running the Project
+
+Requirements: JDK 17+ and Maven. No Docker or network services needed.
+
+```bash
+mvn test                 # 24 unit tests
+mvn compile exec:java    # run the demo (Main)
+```
+
 
 ---
 

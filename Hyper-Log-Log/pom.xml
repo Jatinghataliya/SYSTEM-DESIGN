@@ -12,9 +12,21 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- default demo; override with -Dexec.mainClass=com.example.hyperloglog.DataSketchesDemo -->
+        <exec.mainClass>com.example.hyperloglog.Main</exec.mainClass>
     </properties>
 
     <dependencies>
+        <!--
+          6.2.0 is the newest release that runs on a plain JDK 17 or 21 with no extra JVM flags:
+            7.x needs the jdk.incubator.foreign module, which exists only on JDK 17 and 18
+            8.x needs JDK 21 with preview features enabled, 9.x needs JDK 25
+        -->
+        <dependency>
+            <groupId>org.apache.datasketches</groupId>
+            <artifactId>datasketches-java</artifactId>
+            <version>6.2.0</version>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
@@ -40,7 +52,7 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.1.0</version>
                 <configuration>
-                    <mainClass>com.example.hyperloglog.Main</mainClass>
+                    <mainClass>${exec.mainClass}</mainClass>
                 </configuration>
             </plugin>
         </plugins>

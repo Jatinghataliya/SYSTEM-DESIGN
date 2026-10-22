@@ -170,50 +170,96 @@ Both equations execute in **$O(1)$ constant time** using simple bitwise operatio
 
 ---
 
-## 9. Project Structure
+## 9. Implementations & Java Libraries
+
+This repository provides three standalone Java implementations demonstrating different architectural and library approaches:
+
+| Module | Core Dependencies | Rolling Hash | Strong Hash | Features |
+|---|---|---|---|---|
+| **`Rsync` (Core)** | Core Java 17 | Tridgell 32-bit | MD5 (128-bit) | Zero-dependency pure Java reference implementation with stats & metrics |
+| **`Rsync-Guava`** | Google Guava 33+ | Adler-32 (Rsync v29) | Guava `SHA-256` / `MD5` | Immutable Multimaps, HashCode representation, ByteStreams |
+| **`Rsync-Apache-Commons`** | Commons Codec & IO | Fletcher-32 | Commons `DigestUtils.md5Hex` | Hex digests, Apache Commons stream pipelines |
+
+---
+
+## 10. Project Structure
 
 ```
 Rsync/
 ├── pom.xml
 ├── README.md
-└── src/
-    ├── main/java/com/example/rsync/
-    │   ├── BlockMatchOp.java           # Delta instruction for basis block reuse
-    │   ├── BlockSignature.java         # Metadata record for a basis block
-    │   ├── DeltaOp.java                # Sealed interface for delta instructions
-    │   ├── LiteralOp.java              # Delta instruction containing raw literal bytes
-    │   ├── Main.java                   # Visual demonstration runner
-    │   ├── RollingChecksum.java        # O(1) Tridgell 32-bit rolling hash
-    │   ├── Rsync.java                  # Main facade API orchestrating sync
-    │   ├── RsyncDeltaGenerator.java    # Sliding window sender delta generator
-    │   ├── RsyncReconstructor.java     # Receiver-side file reconstructor
-    │   ├── RsyncSignatureGenerator.java# Basis file chunker and signature table builder
-    │   ├── RsyncStats.java             # Bandwidth metrics and transfer statistics
-    │   ├── RsyncSyncResult.java        # Encapsulates reconstructed bytes & metrics
-    │   ├── SignatureTable.java         # Fast hash index for candidate block lookup
-    │   └── StrongChecksum.java         # Cryptographic MD5 hash generator
-    └── test/java/com/example/rsync/
-        ├── RollingChecksumTest.java    # Step-by-step rolling validation vs direct compute
-        └── RsyncTest.java              # Complete end-to-end sync test suite
+├── src/                                  # Core Java 17 Implementation
+│   ├── main/java/com/example/rsync/
+│   │   ├── BlockMatchOp.java             # Delta instruction for basis block reuse
+│   │   ├── BlockSignature.java           # Metadata record for a basis block
+│   │   ├── DeltaOp.java                  # Sealed interface for delta instructions
+│   │   ├── LiteralOp.java                # Delta instruction containing raw literal bytes
+│   │   ├── Main.java                     # Visual demonstration runner
+│   │   ├── RollingChecksum.java          # O(1) Tridgell 32-bit rolling hash
+│   │   ├── Rsync.java                    # Main facade API orchestrating sync
+│   │   ├── RsyncDeltaGenerator.java      # Sliding window sender delta generator
+│   │   ├── RsyncReconstructor.java       # Receiver-side file reconstructor
+│   │   ├── RsyncSignatureGenerator.java  # Basis file chunker and signature table builder
+│   │   ├── RsyncStats.java               # Bandwidth metrics and transfer statistics
+│   │   ├── RsyncSyncResult.java          # Encapsulates reconstructed bytes & metrics
+│   │   ├── SignatureTable.java           # Fast hash index for candidate block lookup
+│   │   └── StrongChecksum.java           # Cryptographic MD5 hash generator
+│   └── test/java/com/example/rsync/
+│       ├── RollingChecksumTest.java      # Step-by-step rolling validation vs direct compute
+│       └── RsyncTest.java                # Complete end-to-end sync test suite
+│
+├── Rsync-Guava/                          # Google Guava Submodule
+│   ├── pom.xml
+│   └── src/
+│       ├── main/java/com/example/rsyncguava/
+│       │   ├── Adler32RollingChecksum.java
+│       │   ├── GuavaBlockSignature.java
+│       │   ├── GuavaDeltaInstruction.java
+│       │   ├── GuavaRsyncEngine.java
+│       │   ├── GuavaSignatureTable.java
+│       │   └── Main.java
+│       └── test/java/com/example/rsyncguava/
+│           └── GuavaRsyncTest.java
+│
+└── Rsync-Apache-Commons/                 # Apache Commons Submodule
+    ├── pom.xml
+    └── src/
+        ├── main/java/com/example/rsynccommons/
+        │   ├── CommonsBlockSignature.java
+        │   ├── CommonsRsyncEngine.java
+        │   ├── CommonsSignatureTable.java
+        │   ├── Fletcher32RollingChecksum.java
+        │   └── Main.java
+        └── test/java/com/example/rsynccommons/
+            └── CommonsRsyncTest.java
 ```
 
 ---
 
-## 10. Build & Run
+## 11. Build & Run
 
 ### Prerequisites
 - **JDK 17+**
 - **Maven 3.8+**
 
-### Run Unit Tests
+### 1. Core Reference Implementation
 ```bash
 cd SYSTEM-DESIGN/Rsync
 mvn clean test
+mvn compile exec:java
 ```
 
-### Run Educational Demo
+### 2. Google Guava Module
 ```bash
-cd SYSTEM-DESIGN/Rsync
+cd SYSTEM-DESIGN/Rsync/Rsync-Guava
+mvn clean test
+mvn compile exec:java
+```
+
+### 3. Apache Commons Module
+```bash
+cd SYSTEM-DESIGN/Rsync/Rsync-Apache-Commons
+mvn clean test
 mvn compile exec:java
 ```
 

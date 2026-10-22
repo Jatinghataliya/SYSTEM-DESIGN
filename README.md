@@ -20,6 +20,7 @@ A growing collection of **production-grade Java implementations** of classic sys
 | 8 | [Ray-Casting](#8-ray-casting) | Geospatial | Point-in-polygon, geofencing, S2, H3, PostGIS, GeoTools |
 | 9 | [GeoHash](#9-geohash) | Geospatial | Lat/lon to string cells, neighbours, proximity search |
 | 10 | [Rsync](#10-rsync) | Distributed Synchronization | Rolling checksum, remote delta sync, bandwidth optimization |
+| 11 | [Gossip-Protocol](#11-gossip-protocol) | Distributed Systems | Epidemic rumor mongering, SWIM failure detection, Anti-Entropy |
 
 ---
 
@@ -373,6 +374,32 @@ The **Rsync Algorithm** (Tridgell & Mackerras) synchronizes files across endpoin
 ```bash
 cd Rsync
 mvn test          # 10 unit tests
+mvn compile exec:java
+```
+
+---
+
+## 11. Gossip-Protocol
+
+**`Gossip-Protocol/`** · [README](Gossip-Protocol/README.md)
+
+A decentralized, peer-to-peer epidemic communication and health monitoring framework combining **Epidemic Rumor Mongering**, **SWIM Failure Detection with Suspicion & Refutation**, and **3-Phase Push-Pull Anti-Entropy Reconciliation**.
+
+### Key concepts
+- Epidemic Rumor Mongering: $O(\log N)$ cluster-wide broadcast rounds via SIR model
+- SWIM Failure Detector: Direct probing + indirect `PING-REQ` via $k$ peers for zero false positives with $O(1)$ per-node message overhead
+- Incarnation Numbers: Refutation mechanism preventing false suspicion declarations
+- 3-Phase Anti-Entropy (SYN $\to$ ACK $\to$ ACK2): Eventual consistency reconciliation for healed network partitions
+
+### When to use
+- Large-scale clusters ($N \ge 50$ to $10,000+$ nodes) like Apache Cassandra, Amazon DynamoDB, ScyllaDB, Consul Serf, Redis Cluster
+- Decentralized node discovery, membership lifecycle, and failure detection
+- Configuration and schema distribution in partition-tolerant AP architectures
+
+### Build & run
+```bash
+cd Gossip-Protocol
+mvn test
 mvn compile exec:java
 ```
 

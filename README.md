@@ -19,6 +19,7 @@ A growing collection of **production-grade Java implementations** of classic sys
 | 7 | [Lossy-Count](#7-lossy-count) | Streaming Algorithms | Frequent items / heavy hitters in unbounded streams |
 | 8 | [Ray-Casting](#8-ray-casting) | Geospatial | Point-in-polygon, geofencing, S2, H3, PostGIS, GeoTools |
 | 9 | [GeoHash](#9-geohash) | Geospatial | Lat/lon to string cells, neighbours, proximity search |
+| 10 | [Rsync](#10-rsync) | Distributed Synchronization | Rolling checksum, remote delta sync, bandwidth optimization |
 
 ---
 
@@ -346,6 +347,32 @@ Nearby search on stores without spatial indexes (Redis, DynamoDB, Cassandra), sh
 ```bash
 cd GeoHash
 mvn test
+mvn compile exec:java
+```
+
+---
+
+## 10. Rsync
+
+**`Rsync/`** · [README](Rsync/README.md)
+
+The **Rsync Algorithm** (Tridgell & Mackerras) synchronizes files across endpoints by transferring only modified bytes and basis block references, utilizing an $O(1)$ rolling checksum and 128-bit strong hash (MD5).
+
+### Key concepts
+- Basis file chunking into fixed-size blocks (e.g. 512B / 1KB / 2KB)
+- Two-level hashing: fast 32-bit rolling checksum + 128-bit strong cryptographic hash
+- Sliding window on sender to achieve byte-offset shift invariance
+- Delta stream containing `LiteralOp` (new data) and `BlockMatchOp` (basis block reuse)
+
+### When to use
+- Incremental file sync & backups (VM images, database dumps, logs)
+- Deployment pipelines shipping modified binaries/layers
+- Bandwidth-constrained or metered network data sync
+
+### Build & run
+```bash
+cd Rsync
+mvn test          # 10 unit tests
 mvn compile exec:java
 ```
 

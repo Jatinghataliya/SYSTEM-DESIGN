@@ -18,6 +18,7 @@ A growing collection of **production-grade Java implementations** of classic sys
 | 6 | [Leaky-Bucket](#6-leaky-bucket) | Rate Limiting | Fixed-rate traffic shaping with a leaky bucket |
 | 7 | [Lossy-Count](#7-lossy-count) | Streaming Algorithms | Frequent items / heavy hitters in unbounded streams |
 | 8 | [Ray-Casting](#8-ray-casting) | Geospatial | Point-in-polygon, geofencing, S2, H3, PostGIS, GeoTools |
+| 9 | [GeoHash](#9-geohash) | Geospatial | Lat/lon to string cells, neighbours, proximity search |
 
 ---
 
@@ -323,6 +324,29 @@ docker compose up -d          # optional: needed only for PostGIS tests
 mvn test
 mvn compile exec:java
 docker compose down
+```
+
+---
+
+## 9. GeoHash
+
+**`GeoHash/`** · [README](GeoHash/README.md)
+
+**GeoHash** encodes a latitude/longitude into a short base-32 string naming a rectangular cell. Longer strings are smaller cells nested inside the shorter prefix, so "nearby" becomes a prefix / key lookup on any ordinary index.
+
+### Implemented
+- `encode` / `decode` (to bounding box), 8-direction `neighbors` with antimeridian wrap and pole handling
+- `GeoIndex`: centre cell + 8 neighbours lookup, haversine post-filter, automatic precision for a radius
+- Test demonstrating the **boundary problem** (2 m apart, unrelated prefixes)
+
+### When to use
+Nearby search on stores without spatial indexes (Redis, DynamoDB, Cassandra), sharding/caching by location, heatmap bucketing, blurred location privacy.
+
+### Build & run
+```bash
+cd GeoHash
+mvn test
+mvn compile exec:java
 ```
 
 ---

@@ -21,6 +21,8 @@ A growing collection of **production-grade Java implementations** of classic sys
 | 9 | [GeoHash](#9-geohash) | Geospatial | Lat/lon to string cells, neighbours, proximity search |
 | 10 | [Rsync](#10-rsync) | Distributed Synchronization | Rolling checksum, remote delta sync, bandwidth optimization |
 | 11 | [Gossip-Protocol](#11-gossip-protocol) | Distributed Systems | Epidemic rumor mongering, SWIM failure detection, Anti-Entropy |
+| 12 | [Hierarchical-Timing-Wheel](#12-hierarchical-timing-wheel) | Timer & Scheduling Algorithms | $O(1)$ high-throughput timer management & multi-tier cascades |
+| 13 | [Distributed-Reminder-System](#13-distributed-reminder-system) | Distributed Systems / Notifications | Large-scale reminder scheduling, DB time-bucketing, 6 PM bursts |
 
 ---
 
@@ -399,6 +401,54 @@ A decentralized, peer-to-peer epidemic communication and health monitoring frame
 ### Build & run
 ```bash
 cd Gossip-Protocol
+mvn test
+mvn compile exec:java
+```
+
+---
+
+## 12. Hierarchical Timing Wheel
+
+**`Hierarchical-Timing-Wheel/`** · [README](Hierarchical-Timing-Wheel/README.md)
+
+A high-throughput, multi-tier **Hierarchical Timing Wheel** (Varghese & Lauck / Kafka Timer architecture) for managing millions of concurrent timeouts and delayed tasks in $O(1)$ time complexity.
+
+### Key concepts
+- Multi-tier wheel hierarchy (e.g. milliseconds $\to$ seconds $\to$ minutes $\to$ hours)
+- $O(1)$ task scheduling and $O(1)$ task cancellation via circular doubly-linked bucket entries
+- Automatic cascade-down mechanism from upper coarse wheels to fine-grained lower wheels
+- Kafka-style `DelayQueue` bucket management to eliminate empty-slot busy-spinning
+
+### When to use
+- Connection idle timeouts and keep-alives (TCP, WebSocket, gRPC in Netty / Envoy)
+- Distributed broker request purgatories and message delay scheduling (Apache Kafka)
+- Massive-scale session and ephemeral cache TTL management ($10^6+$ active timers)
+
+### Build & run
+```bash
+cd Hierarchical-Timing-Wheel
+mvn test
+mvn compile exec:java
+```
+
+---
+
+## 13. Distributed Reminder System
+
+**`Distributed-Reminder-System/`** · [README](Distributed-Reminder-System/README.md)
+
+A production-grade, distributed reminder and notification system handling millions of reminders, 10,000+ simultaneous 6:00 PM bursts, and $O(1)$ in-flight cancellations without overwhelming primary databases.
+
+### Key concepts
+- Real SQL Database with time-bucket partitioning (`time_bucket`, `trigger_time`, `status`)
+- Lookahead window batch pre-fetcher eliminating per-second database queries
+- Consistent hash routing to worker nodes running in-memory Hierarchical Timing Wheels
+- High-throughput asynchronous message queue (Kafka simulation) with idempotency key deduplication
+- Asynchronous batch database write-behind status updates
+
+### Build & run
+```bash
+cd Distributed-Reminder-System
 mvn test
 mvn compile exec:java
 ```

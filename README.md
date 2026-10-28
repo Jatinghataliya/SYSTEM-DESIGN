@@ -23,6 +23,9 @@ A growing collection of **production-grade Java implementations** of classic sys
 | 11 | [Gossip-Protocol](#11-gossip-protocol) | Distributed Systems | Epidemic rumor mongering, SWIM failure detection, Anti-Entropy |
 | 12 | [Hierarchical-Timing-Wheel](#12-hierarchical-timing-wheel) | Timer & Scheduling Algorithms | $O(1)$ high-throughput timer management & multi-tier cascades |
 | 13 | [Distributed-Reminder-System](#13-distributed-reminder-system) | Distributed Systems / Notifications | Large-scale reminder scheduling, DB time-bucketing, 6 PM bursts |
+| 14 | [Hyper-Log-Log](#14-hyperloglog) | Probabilistic Data Structures | Approximate distinct count / cardinality in fixed memory |
+| 15 | [Merkle-Tree](#15-merkle-tree) | Cryptographic Verification | Binary hash tree for delta sync and tamper detection |
+| 16 | [Quadtree](#16-quadtree) | Geospatial | 2D recursive quadrant spatial indexing & range queries |
 
 ---
 
@@ -452,6 +455,60 @@ cd Distributed-Reminder-System
 mvn test
 mvn compile exec:java
 ```
+
+---
+
+## 14. HyperLogLog
+
+**`Hyper-Log-Log/`** · [README](Hyper-Log-Log/README.md)
+
+**HyperLogLog (HLL)** estimates the number of distinct elements (cardinality) of massive datasets using a tiny, fixed amount of memory ($O(\log \log N)$ space).
+
+### Key concepts
+- 64-bit hashing (Murmur3) with leading zeros counting
+- Harmonic mean aggregation across $2^p$ register buckets
+- Bias correction and linear counting for small cardinalities
+
+### When to use
+- Unique daily/monthly active users (DAU/MAU)
+- Distinct search query counts and web traffic analytics
+- Network flow monitoring (distinct IP addresses per router)
+
+---
+
+## 15. Merkle Tree
+
+**`Merkle-Tree/`** · [README](Merkle-Tree/README.md)
+
+A **Merkle Tree** is a cryptographic hash tree where every leaf node is labeled with the cryptographic hash of a data block, and every non-leaf node is the hash of its children.
+
+### Key concepts
+- Fast $O(\log N)$ tamper detection and consistency checks
+- Merkle audit proofs and cryptographic state verification
+- Multi-library implementations (Bitcoinj, Guava, Web3j)
+
+### When to use
+- Distributed database replica anti-entropy (Cassandra, DynamoDB, Riak)
+- Blockchain block transaction verification (Bitcoin, Ethereum)
+- Git commit object hashing and decentralized file systems (IPFS)
+
+---
+
+## 16. Quadtree
+
+**`Quadtree/`** · [README](Quadtree/README.md)
+
+A **Quadtree** is a 2D spatial tree data structure where each internal node has exactly four children (NW, NE, SW, SE), partitioning two-dimensional space recursively.
+
+### Key concepts
+- Recursive spatial partitioning with capacity thresholds
+- Fast bounding-box range queries and $k$-nearest neighbors
+- Spatial point querying and collision detection
+
+### When to use
+- Spatial indexing for ride-sharing, restaurant lookup, and map points
+- 2D game collision detection and visual culling
+- Image compression and GIS spatial queries
 
 ---
 
